@@ -5,23 +5,43 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using IncityChatServer.Util;
+using System.Threading;
 
 class Server
 {
+
+    private static AutoResetEvent connectionWaitHandle = new AutoResetEvent(false);
+
     public static void Main()
     {
-        TcpListener server = new TcpListener(IPAddress.Parse("127.0.0.1"), 80);
+        TcpListener listener = new TcpListener(IPAddress.Parse("127.0.0.1"), 80);
+        listener.Start();
 
-        server.Start();
-        Console.WriteLine("Server has started on 127.0.0.1:80.{0}Waiting for a connection...", Environment.NewLine);
+        while (true)
+        {
+            IAsyncResult result = listener.BeginAcceptTcpClient(HandleAsyncConnection, listener);
+            connectionWaitHandle.WaitOne(); // Wait until a client has begun handling an event
+            connectionWaitHandle.Reset(); // Reset wait handle or the loop goes as fast as it can (after first request)
+        }
+    }
 
-        TcpClient client = server.AcceptTcpClient();
+    private static void HandleAsyncConnection(IAsyncResult result)
+    {
+        TcpListener listener = (TcpListener)result.AsyncState;
+        TcpClient client = listener.EndAcceptTcpClient(result);
+        connectionWaitHandle.Set(); //Inform the main thread this connection is now handled
 
-        Console.WriteLine("A client connected.");
+        Thread chatThread = new Thread(new ParameterizedThreadStart(DoChat));
+        chatThread.Start(client);
+
+    }
+
+    private static void DoChat(object param)
+    {
+        TcpClient client = (TcpClient)param;
 
         NetworkStream stream = client.GetStream();
 
-        //enter to an infinite cycle to be able to handle every change in stream
         while (true)
         {
             while (!stream.DataAvailable) ;
@@ -49,13 +69,14 @@ class Server
                     + Environment.NewLine);
 
                 stream.Write(response, 0, response.Length);
-            } else
+            }
+            else
             {
                 String message = CommunicationUtil.DecodeMessage(bytes);
-                
+
                 Console.WriteLine("Decoded message: {0}{1}", message, Environment.NewLine);
 
-                String messageToClient = Console.ReadLine();
+                String messageToClient = "Ahoj";
 
                 Byte[] response = CommunicationUtil.EncodeMessage(messageToClient);
                 stream.Write(response, 0, response.Length);
